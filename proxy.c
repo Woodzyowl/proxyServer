@@ -12,6 +12,9 @@
 #include <string.h>
 #include <unistd.h>
 #include "csapp.h"
+#include <time.h>
+
+FILE *fp;
 
 void* doit(void* fd);
 void read_requesthdrs(rio_t *rp);
@@ -129,6 +132,89 @@ void read_requesthdrs(rio_t *rp)
 }
 /* $end read_requesthdrs */
 
+
+/********* Start of Logging Functions *********/
+/* 
+Creates a log file if one does not exist,
+logs the server's activation time
+*/
+void logcreate () {
+	fp = fopen("LOG.txt", "a+");	//creates file or opens for appending
+
+	time_t timer;
+  char buffer[29];
+	struct tm* tm_info;
+
+  time(&timer);
+  tm_info = localtime(&timer);
+
+  strftime(buffer, 29, "[%Y:%m:%d %H:%M:%S] ", tm_info);
+
+	if (fputs(buffer, fp) != 0) {
+		printf("Error writing time of activation to LOG.txt\n");
+	}
+	if (fputs("Server Activated \n", fp) != 0) {
+		printf("Error writing activation message to LOG.txt\n");
+	}
+}
+
+/* 
+Adds the client's request to the log file
+*/
+/* NOTE: I still need to figure out how to add weekdays */ 
+void logrequest (char *browserIP, char *URL, char *numberofbytes) {
+	time_t timer;
+  char buffer[29];
+	struct tm* tm_info;
+
+  time(&timer);
+  tm_info = localtime(&timer);
+
+  strftime(buffer, 29, "[%Y:%m:%d %H:%M:%S] ", tm_info);
+
+	if (fputs(buffer, fp) != 0) {
+		printf("Error writing time of request to LOG.txt\n");
+	}
+	if (fputs(browserIP, fp) != 0) {
+		printf("Error writing browserIP request to LOG.txt\n");
+	}
+	fputs(" ", fp); //adds a space between browserIP and URL
+	if (fputs(URL, fp) != 0) {
+		printf("Error writing URL request to LOG.txt\n");
+	}
+	fputs(" ", fp); //adds a space between URL and size
+	if (fputs(numberofbytes, fp) != 0) {
+		printf("Error writing size request to LOG.txt\n");
+	}
+	fputs("\n", fp); //adds a new line after size, concluding the request
+}
+
+/* 
+Logs the time of the server closing 
+*/
+void logclose () {
+	time_t timer;
+  char buffer[29];
+	struct tm* tm_info;
+
+  time(&timer);
+  tm_info = localtime(&timer);
+
+  strftime(buffer, 29, "[%Y:%m:%d %H:%M:%S] ", tm_info);
+
+	if (fputs(buffer, fp) != 0) {
+		printf("Error writing time of closing to LOG.txt\n");
+	}
+	if (fputs("Server Closed \n", fp) != 0) {
+		printf("Error writing closure message to LOG.txt\n");
+	}
+	if (fclose(fp) != 0) {
+		printf("Error closing LOG.txt\n");
+	}
+}
+
+/********* End of Logging Functions *********/ 
+
 int main(int argc, char **argv) 
 {
     int listenfd;
@@ -145,6 +231,7 @@ int main(int argc, char **argv)
     }
 
     listenfd = Open_listenfd(argv[1]);
+		logcreate(); /* OPENS LOG FILE */
     while (1) {
 	clientlen = sizeof(clientaddr);
         connfdp=(int *) malloc(sizeof(int));
@@ -160,6 +247,7 @@ int main(int argc, char **argv)
                hp->h_name, haddrp, client_port);
         pthread_create(tid,NULL,doit,connfdp);
     }
+		logclose(); /* CLOSES LOG FILE */
     exit(0);
 }
 /* $end echoserverimain */
