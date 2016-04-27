@@ -1,11 +1,18 @@
+/*
+ * proxy.c - CS:APP Web proxy
+ *
+ * TEAM MEMBERS:  put your name(s) and e-mail addresses here
+ *     John Hyatt hyattjp0@sewanee.edu
+ *     James Q. Pleebus, pleebles@q.sewanee.edu
+ * 
+ * Provides a handy dandy proxy for logging web traffic
+ */ 
+
 #include <stdio.h>
 
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
-
-/* You won't lose style points for including this long line in your code */
-//static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
 
 #include <ctype.h>
@@ -17,120 +24,67 @@
 FILE *fp;
 
 void* doit(void* fd);
-void read_requesthdrs(rio_t *rp);
-void clienterror(int fd, char *cause, char *errnum, 
-		 char *shortmsg, char *longmsg);
-
-/* Destructively modify string to be upper case */
-void upper_case(char *s)
-{
-  while (*s) {
-    *s = toupper(*s);
-    s++;
-  }
-}
-
-void* proxy(void* connfdp) 
-{
-    size_t n; 
-    char buf[MAXLINE]; 
-    rio_t rio;
-
-    rio_readinitb(&rio, *((int *) connfdp));
-    while((n = rio_readlineb(&rio, buf, MAXLINE)) != 0) {
-	printf("server received %d bytes\ndata: %s", (int) n, buf);
-	upper_case(buf);
-	rio_writen(*((int *) connfdp), buf, n);
-    }
-    printf("Connection closed\n");
-    Close(*((int *) connfdp));
-
-    return NULL;
-}
+int parse_uri(char *uri, char *hostname, char *pathname, int *port);
+char *strcasestr(const char *haystack, const char *needle);
+void logrequest (char *browserIP, char *URL, char *numberofbytes);
 
 /*
- * doit - handle one HTTP request/response transaction
+ * doit - handle proxy request
  */
 /* $begin doit */
 void* doit(void* fd) 
 {
-    struct stat sbuf;
-    char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
-    char filename[MAXLINE];
-    rio_t rio;
+    //struct stat sbuf;
+    int servfd,clientfd=*((int *)fd);
+    free(fd);
+    char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE],
+         hostname[MAXLINE],pathname [MAXLINE];
+    int* port=(int *)malloc(sizeof(int));
+    //char filename[MAXLINE];
+    char response[MAX_OBJECT_SIZE];
+    char request[MAX_OBJECT_SIZE];
+    char temp_response[MAX_OBJECT_SIZE];
+    int response_size,temp_response_size;
+    rio_t rio, servrio;
+    char portstr[MAXLINE];
 
     /* Read request line and headers */
-    rio_readinitb(&rio, *((int *)fd));
-    if (!rio_readlineb(&rio, buf, MAXLINE))  //line:netp:doit:readrequest
-        return NULL;
-    printf("%s", buf);
+    rio_readinitb(&rio, clientfd);
+    rio_readlineb(&rio, buf, MAXLINE);
+    strcat(request,buf);
     sscanf(buf, "%s %s %s", method, uri, version);       //line:netp:doit:parserequest
-    if (strcasecmp(method, "GET")) {                     //line:netp:doit:beginrequesterr
-        clienterror(*((int *)fd), method, "501", "Not Implemented",
-                    "Tiny does not implement this method");
-        return NULL;
-    }                                                    //line:netp:doit:endrequesterr
-    read_requesthdrs(&rio);                              //line:netp:doit:readrequesthdrs
-
-    if (stat(filename, &sbuf) < 0) {                     //line:netp:doit:beginnotfound
-	clienterror(*((int *)fd), filename, "404", "Not found",
-		    "Tiny couldn't find this file");
-	return NULL;
-    }                                                    //line:netp:doit:endnotfound
-
-    if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) { //line:netp:doit:readable
-        clienterror(*((int *)fd), filename, "403", "Forbidden",
-		"Tiny couldn't read the file");
-        return NULL;
+    parse_uri(uri, hostname, pathname, port);
+    sprintf(portstr,"%d",*port);
+    while(strcmp(buf, "\r\n")) {          //line:netp:readhdrs:checkterm
+        rio_readlineb(&rio, buf, MAXLINE);
+        strcat(request,buf);
+	printf("%s", buf);
     }
+    strcat(request,"\r\n\r\n");
+    printf("Hostname: %s\tPort: %s\n",hostname,portstr);
+    servfd=open_clientfd(hostname, portstr);
+    rio_readinitb(&servrio,servfd);
+    rio_writen(servfd,request,strlen(request));
+    do{
+        if(strcasestr(response,"</html>")!=(char*) NULL){
+            break;
+        }
+        temp_response_size=rio_readlineb(&servrio,temp_response,MAX_OBJECT_SIZE);
+        response_size+=temp_response_size-1;
+        strcat(response,temp_response);
+        strcat(response,"\n");
+    }while(temp_response_size>0);
+    printf("Got the response\n");
+    rio_writen(clientfd,response,response_size);
+    char response_size_str[MAXLINE];
+    sprintf(response_size_str,"%d",response_size);
+    logrequest(char *browserIP, uri,response_size_str);
+    printf("Sent the response\n");
+    free(port);
     return NULL;
     //serve_static(fd, filename, sbuf.st_size);        //line:netp:doit:servestatic
 }
 /* $end doit */
-
-/*
- * clienterror - returns an error message to the client
- */
-/* $begin clienterror */
-void clienterror(int fd, char *cause, char *errnum, 
-		 char *shortmsg, char *longmsg) 
-{
-    char buf[MAXLINE], body[MAXBUF];
-
-    /* Build the HTTP response body */
-    sprintf(body, "<html><title>Tiny Error</title>");
-    sprintf(body, "%s<body bgcolor=""ffffff"">\r\n", body);
-    sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
-    sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
-    sprintf(body, "%s<hr><em>The Tiny Web server</em>\r\n", body);
-
-    /* Print the HTTP response */
-    sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-    rio_writen(fd, buf, strlen(buf));
-    sprintf(buf, "Content-type: text/html\r\n");
-    rio_writen(fd, buf, strlen(buf));
-    sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
-    rio_writen(fd, buf, strlen(buf));
-    rio_writen(fd, body, strlen(body));
-}
-/* $end clienterror */
-
-/*
- * read_requesthdrs - read HTTP request headers
- */
-/* $begin read_requesthdrs */
-void read_requesthdrs(rio_t *rp) 
-{
-    char buf[MAXLINE];
-
-    rio_readlineb(rp, buf, MAXLINE);
-    printf("%s", buf);
-    while(strcmp(buf, "\r\n")) {          //line:netp:readhdrs:checkterm
-	rio_readlineb(rp, buf, MAXLINE);
-	printf("%s", buf);
-    }
-}
-/* $end read_requesthdrs */
 
 
 /********* Start of Logging Functions *********/
@@ -139,7 +93,7 @@ Creates a log file if one does not exist,
 logs the server's activation time
 */
 void logcreate () {
-	fp = fopen("LOG.txt", "a+");	//creates file or opens for appending
+	fp = fopen("proxy.log", "a+");	//creates file or opens for appending
 
 	time_t timer;
   char buffer[29];
@@ -251,3 +205,49 @@ int main(int argc, char **argv)
     exit(0);
 }
 /* $end echoserverimain */
+
+
+/*
+ * parse_uri - URI parser
+ * 
+ * Given a URI from an HTTP proxy GET request (i.e., a URL), extract
+ * the host name, path name, and port.  The memory for hostname and
+ * pathname must already be allocated and should be at least MAXLINE
+ * bytes. Return -1 if there are any problems.
+ */
+int parse_uri(char *uri, char *hostname, char *pathname, int *port)
+{
+    char *hostbegin;
+    char *hostend;
+    char *pathbegin;
+    int len;
+
+    if (strncasecmp(uri, "http://", 7) != 0) {
+	hostname[0] = '\0';
+	return -1;
+    }
+       
+    /* Extract the host name */
+    hostbegin = uri + 7;
+    hostend = strpbrk(hostbegin, " :/\r\n\0");
+    len = hostend - hostbegin;
+    strncpy(hostname, hostbegin, len);
+    hostname[len] = '\0';
+    
+    /* Extract the port number */
+    *port = 80; /* default */
+    if (*hostend == ':')   
+	*port = atoi(hostend + 1);
+    
+    /* Extract the path */
+    pathbegin = strchr(hostbegin, '/');
+    if (pathbegin == NULL) {
+	pathname[0] = '\0';
+    }
+    else {
+	pathbegin++;	
+	strcpy(pathname, pathbegin);
+    }
+
+    return 0;
+}
