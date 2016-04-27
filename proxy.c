@@ -3,7 +3,7 @@
  *
  * TEAM MEMBERS:  put your name(s) and e-mail addresses here
  *     John Hyatt hyattjp0@sewanee.edu
- *     James Q. Pleebus, pleebles@q.sewanee.edu
+ *     Tyler Epps eppstd0@sewanee.edu
  * 
  * Provides a handy dandy proxy for logging web traffic
  */ 
@@ -58,10 +58,8 @@ void* doit(void* fd)
     while(strcmp(buf, "\r\n")) {          //line:netp:readhdrs:checkterm
         rio_readlineb(&rio, buf, MAXLINE);
         strcat(request,buf);
-	printf("%s", buf);
     }
     strcat(request,"\r\n\r\n");
-    printf("Hostname: %s\tPort: %s\n",hostname,portstr);
     servfd=open_clientfd(hostname, portstr);
     rio_readinitb(&servrio,servfd);
     rio_writen(servfd,request,strlen(request));
@@ -74,12 +72,10 @@ void* doit(void* fd)
         strcat(response,temp_response);
         strcat(response,"\n");
     }while(temp_response_size>0);
-    printf("Got the response\n");
     rio_writen(clientfd,response,response_size);
     char response_size_str[MAXLINE];
     sprintf(response_size_str,"%d",response_size);
     logrequest("NERD", uri,response_size_str);
-    printf("Sent the response\n");
     free(port);
     return NULL;
     //serve_static(fd, filename, sbuf.st_size);        //line:netp:doit:servestatic
@@ -88,86 +84,164 @@ void* doit(void* fd)
 
 
 /********* Start of Logging Functions *********/
+/*
+Function to calculate the day of the week,
+written by Sakamoto, Lachman, Keith and Craver,
+based on the fact that Jan 1 1900 was a Monday.
+*/
+int dayofweek(int d, int m, int y)
+{
+    static int t[] = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
+    y -= m < 3;
+    return ( y + y/4 - y/100 + y/400 + t[m-1] + d) % 7;
+}
+
+/*
+Builds a formatted string out of a buffer for date-logging
+*/
+void formatdate(char* buffer) {
+	struct tm* tm_info;
+	time_t timer;
+	char day[3];
+	char year[5];
+	char month[5];
+	char weekday[4];
+	char clock[10];
+	char *temp;
+
+  time(&timer);
+  tm_info = localtime(&timer);
+
+	strftime(day, 3, "%d", tm_info);
+	strftime(month, 5, "%m", tm_info);
+	strftime(year, 5, "%Y", tm_info);
+	strftime(clock, 10, "%H:%M:%S", tm_info);
+	long dayval = strtol(day, &temp, 10);
+	long monthval = strtol(month, &temp, 10);
+	long yearval =  strtol(year, &temp, 10);
+	int weekval = dayofweek((int)dayval, (int)monthval, (int)yearval);
+
+	if (weekval == 0) {
+		strcpy(weekday, "Sun");
+	} else if (weekval == 1) {
+		strcpy(weekday, "Mon");
+	} else if (weekval == 2) {
+		strcpy(weekday, "Tues");
+	} else if (weekval == 3) {
+		strcpy(weekday, "Wed");
+	} else if (weekval == 4) {
+		strcpy(weekday, "Thur");
+	} else if (weekval == 5) {
+		strcpy(weekday, "Fri");
+	} else {
+		strcpy(weekday, "Sat");
+	}
+	if (monthval == 1) {
+		strcpy(month, "Jan");
+	} else if (monthval == 2) {
+		strcpy(month, "Feb");
+	} else if (monthval == 3) {
+		strcpy(month, "March");
+	} else if (monthval == 4) {
+		strcpy(month, "April");
+	} else if (monthval == 5) {
+		strcpy(month, "May");
+	} else if (monthval == 6) {
+		strcpy(month, "June");
+	} else if (monthval == 7) {
+		strcpy(month, "July");
+	} else if (monthval == 8) {
+		strcpy(month, "Aug");
+	} else if (monthval == 9) {
+		strcpy(month, "Sept");
+	} else if (monthval == 10) {
+		strcpy(month, "Oct");
+	} else if (monthval == 11) {
+		strcpy(month, "Nov");
+	} else {
+		strcpy(month, "Dec");
+	}
+	
+	sprintf(buffer, "[%s %i %s %i %s]", weekday, (int)dayval, month, (int)yearval, clock);
+}
+
 /* 
 Creates a log file if one does not exist,
 logs the server's activation time
 */
 void logcreate () {
 	fp = fopen("proxy.log", "a+");	//creates file or opens for appending
-
-	time_t timer;
-  char buffer[29];
-	struct tm* tm_info;
-
-  time(&timer);
-  tm_info = localtime(&timer);
-
-  strftime(buffer, 29, "[%Y:%m:%d %H:%M:%S] ", tm_info);
-
-	if (fputs(buffer, fp) != 0) {
-		printf("Error writing time of activation to LOG.txt\n");
+	if (fp == NULL) {
+		printf("Error openning log file at activation.\n");
 	}
-	if (fputs("Server Activated \n", fp) != 0) {
-		printf("Error writing activation message to LOG.txt\n");
+	fflush(fp);
+
+	char buffer[33];
+	formatdate(buffer);
+
+	if (fprintf(fp, "%s ", buffer) < 0) {
+		printf("Error writing time of activation to log.\n");
 	}
+	if (fprintf(fp, "Server Activated\n") < 0) {
+		printf("Error writing activation message to log.\n");
+	}
+
+	fclose(fp);
 }
 
 /* 
 Adds the client's request to the log file
 */
-/* NOTE: I still need to figure out how to add weekdays */ 
 void logrequest (char *browserIP, char *URL, char *numberofbytes) {
-	time_t timer;
-  char buffer[29];
-	struct tm* tm_info;
+	fp = fopen("proxy.log", "a+");
+	if (fp == NULL) {
+		printf("Error openning log file at request.\n");
+	}
+	fflush(fp);
 
-  time(&timer);
-  tm_info = localtime(&timer);
+	char buffer[33];
+	formatdate(buffer);
 
-  strftime(buffer, 29, "[%Y:%m:%d %H:%M:%S] ", tm_info);
+	if (fprintf(fp, "%s ", buffer) < 0) {
+		printf("Error writing time of request to log.\n");
+	}
+	if (fprintf(fp, "%s ", browserIP) < 0) {
+		printf("Error writing browserIP request to log.\n");
+	}
+	if (fprintf(fp, "%s ", URL) < 0) {
+		printf("Error writing URL request to log.\n");
+	}
+	if (fprintf(fp, "%s\n", numberofbytes) < 0) {
+		printf("Error writing size request to log.\n");
+	}
 
-	if (fputs(buffer, fp) != 0) {
-		printf("Error writing time of request to LOG.txt\n");
-	}
-	if (fputs(browserIP, fp) != 0) {
-		printf("Error writing browserIP request to LOG.txt\n");
-	}
-	fputs(" ", fp); //adds a space between browserIP and URL
-	if (fputs(URL, fp) != 0) {
-		printf("Error writing URL request to LOG.txt\n");
-	}
-	fputs(" ", fp); //adds a space between URL and size
-	if (fputs(numberofbytes, fp) != 0) {
-		printf("Error writing size request to LOG.txt\n");
-	}
-	fputs("\n", fp); //adds a new line after size, concluding the request
+	fclose(fp);
 }
 
 /* 
 Logs the time of the server closing 
 */
 void logclose () {
-	time_t timer;
-  char buffer[29];
-	struct tm* tm_info;
-
-  time(&timer);
-  tm_info = localtime(&timer);
-
-  strftime(buffer, 29, "[%Y:%m:%d %H:%M:%S] ", tm_info);
-
-	if (fputs(buffer, fp) != 0) {
-		printf("Error writing time of closing to LOG.txt\n");
+	fp = fopen("proxy.log", "a+");
+	if (fp == NULL) {
+		printf("Error openning log file at closure.\n");
 	}
-	if (fputs("Server Closed \n", fp) != 0) {
-		printf("Error writing closure message to LOG.txt\n");
+	fflush(fp);
+
+	char buffer[33];
+	formatdate(buffer);
+
+	if (fprintf(fp, "%s ", buffer) < 0) {
+		printf("Error writing time of closing to log.\n");
 	}
-	if (fclose(fp) != 0) {
-		printf("Error closing LOG.txt\n");
+	if (fprintf(fp, "Server Closed\n") < 0) {
+		printf("Error writing closure message to log.\n");
 	}
+
+	fclose(fp);
 }
 
-/********* End of Logging Functions *********/ 
+/********* End of Logging Functions *********/
 
 int main(int argc, char **argv) 
 {
@@ -175,9 +249,6 @@ int main(int argc, char **argv)
     int *connfdp;
     socklen_t clientlen;
     struct sockaddr_in clientaddr;
-    struct hostent *hp;
-    char *haddrp;
-    unsigned short client_port;
     pthread_t *tid=(pthread_t *)malloc(sizeof(pthread_t));
     if (argc != 2) {
 	fprintf(stderr, "usage: %s <port>\n", argv[0]);
@@ -191,14 +262,6 @@ int main(int argc, char **argv)
         connfdp=(int *) malloc(sizeof(int));
 	*connfdp = Accept(listenfd, (SA *)&clientaddr, &clientlen);
 	/* determine the domain name and IP address of the client */
-	hp = Gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr, 
-		sizeof(clientaddr.sin_addr.s_addr), AF_INET);
-	haddrp = inet_ntoa(clientaddr.sin_addr);
-	client_port = ntohs(clientaddr.sin_port);
-	printf("server connected to %s (%s), network port %u\n",
-	       hp->h_name, haddrp, clientaddr.sin_port);
-	printf("server connected to %s (%s), local port %u\n",
-               hp->h_name, haddrp, client_port);
         pthread_create(tid,NULL,doit,connfdp);
     }
 		logclose(); /* CLOSES LOG FILE */
